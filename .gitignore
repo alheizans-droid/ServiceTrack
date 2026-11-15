@@ -16,3 +16,13 @@ uploads/*
 Thumbs.db
 .vscode/
 .idea/
+
+# Local environment settings and alternate database files
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite3-*
