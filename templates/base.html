@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ServiceTrack{% endblock %} | ServiceTrack</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="{{ url_for('index') }}">Service<span>Track</span></a>
+    {% if user %}
+    <nav>
+      {% if user.role == 'customer' %}
+        <a href="{{ url_for('customer_home') }}">My Requests</a>
+        <a href="{{ url_for('new_request') }}">New Request</a>
+        <a href="{{ url_for('notifications') }}">Notifications{% if unread_count %} <span class="count" title="{{ unread_count }} unread">{{ unread_count }}</span>{% endif %}</a>
+      {% elif user.role == 'admin' %}
+        <a href="{{ url_for('admin_dashboard') }}">Dashboard</a>
+        <a href="{{ url_for('technicians') }}">Technicians</a>
+      {% else %}
+        <a href="{{ url_for('technician_home') }}">My Jobs</a>
+      {% endif %}
+      <span class="who">{{ user.name }} <small>({{ user.role|capitalize }})</small></span>
+      <a class="logout" href="{{ url_for('logout') }}">Log out</a>
+    </nav>
+    {% endif %}
+  </div>
+</header>
+<main class="wrap">
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% for cat, m in msgs %}<div class="flash {{ cat }}" role="alert"><span class="icon" aria-hidden="true">{{ '✓' if cat == 'success' else '!' }}</span>{{ m }}</div>{% endfor %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

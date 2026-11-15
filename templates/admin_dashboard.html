@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Requests Dashboard</h1>
+<div class="stats">
+  {% for s in STATUSES %}<div class="stat"><b>{{ counts[s] }}</b><span>{{ s }}</span></div>{% endfor %}
+  <a class="stat overdue-stat" href="{{ url_for('admin_dashboard', overdue=1) }}"><b>{{ overdue_count }}</b><span>Overdue (over {{ OVERDUE_HOURS }} h)</span></a>
+</div>
+
+<form class="filters" method="get">
+  <label>Status
+    <select name="status"><option value="">All statuses</option>
+      {% for s in STATUSES %}<option {% if f_status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select></label>
+  <label>Category
+    <select name="category"><option value="">All categories</option>
+      {% for c in categories %}<option {% if f_category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+    </select></label>
+  <label>Sort by date
+    <select name="sort">
+      <option value="newest" {% if f_sort != 'oldest' %}selected{% endif %}>Newest first</option>
+      <option value="oldest" {% if f_sort == 'oldest' %}selected{% endif %}>Oldest first</option>
+    </select></label>
+  <label class="check"><input type="checkbox" name="overdue" value="1" {% if f_overdue %}checked{% endif %}> Overdue only</label>
+  <button class="btn" type="submit">Apply filters</button>
+  <a class="btn light" href="{{ url_for('admin_dashboard') }}">Reset filters</a>
+</form>
+<p class="muted small result-line">Showing {{ requests|length }} request{{ '' if requests|length == 1 else 's' }}{% if filtered %} for the selected filters
+  {% if f_status %}<span class="chip">Status: {{ f_status }}</span>{% endif %}
+  {% if f_category %}<span class="chip">Category: {{ f_category }}</span>{% endif %}
+  {% if f_overdue %}<span class="chip">Overdue only</span>{% endif %}
+  {% if f_sort == 'oldest' %}<span class="chip">Oldest first</span>{% endif %}{% endif %}.</p>
+
+{% if requests %}
+<table class="list">
+  <thead><tr><th>No.</th><th>Category</th><th>Location</th><th>Customer</th><th>Date</th><th>Status</th><th>Technician</th></tr></thead>
+  <tbody>
+  {% for r in requests %}
+    {% set late = is_overdue(r) %}
+    <tr class="{{ 'overdue' if late else '' }}">
+      <td><a href="{{ url_for('request_detail', req_id=r.id) }}">{{ request_number(r.id) }}</a></td>
+      <td>{{ r.category }}</td>
+      <td>Bldg {{ r.building }}, F{{ r.floor }}, Unit {{ r.unit }}</td>
+      <td>{{ r.customer_name }}</td>
+      <td>{{ r.created_at }}{% if r.reopened_at %}<div class="small muted">Reopened {{ r.reopened_at }}</div>{% endif %}</td>
+      <td>{% with s=r.status %}{% include "_status.html" %}{% endwith %}
+        {% if late %}<span class="badge overdue-badge" title="Open for {{ hours_open(r) }} hours">⚠ Overdue · {{ hours_open(r) }} h</span>{% endif %}</td>
+      <td>
+        {% if r.status == 'Submitted' %}
+          {% set matching = technicians|selectattr('specialty', 'equalto', r.category)|list %}
+          {% set options = matching if matching else technicians|selectattr('specialty', 'equalto', 'General')|list %}
+          <form class="assign" method="post" action="{{ url_for('assign_technician', req_id=r.id) }}">
+            <select name="technician_id" required aria-label="Technician for {{ request_number(r.id) }}">
+              <option value="">Choose...</option>
+              {% for t in options %}<option value="{{ t.id }}">{{ t.name }} ({{ t.specialty }})</option>{% endfor %}
+            </select>
+            <button class="btn small" type="submit">Assign</button>
+          </form>
+        {% else %}
+          {{ r.technician_name or '-' }}
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="card empty">No requests match the selected filters. <a href="{{ url_for('admin_dashboard') }}">Reset filters</a></div>
+{% endif %}
+{% endblock %}

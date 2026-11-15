@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if editing else 'Add' }} Technician{% endblock %}
+{% block content %}
+<div class="card narrow">
+  <h1>{{ 'Edit technician' if editing else 'Add technician' }}</h1>
+  <form method="post">
+    <label>Full name <span class="req">*</span><input name="name" value="{{ form.name or '' }}" required></label>
+    <label>Email <span class="req">*</span><input type="email" name="email" value="{{ form.email or '' }}" required></label>
+    <label>Phone <input name="phone" value="{{ form.phone or '' }}"></label>
+    <label>Specialty <span class="req">*</span>
+      <select name="specialty" required>
+        <option value="">-- choose --</option>
+        {% for c in categories %}<option {% if form.specialty == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+      </select></label>
+    <label>{{ 'New password (leave empty to keep the current one)' if editing else 'Password' }}{% if not editing %} <span class="req">*</span>{% endif %}
+      <input type="password" name="password" minlength="6" {% if not editing %}required{% endif %}>
+      <span class="hint">At least 6 characters.</span></label>
+    <button class="btn" type="submit">{{ 'Save changes' if editing else 'Create account' }}</button>
+    <a class="btn light" href="{{ url_for('technicians') }}">Cancel</a>
+  </form>
+</div>
+{% endblock %}

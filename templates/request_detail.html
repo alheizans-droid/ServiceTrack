@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}{{ request_number(req.id) }}{% endblock %}
+{% block content %}
+{% set late = is_overdue(req) %}
+<div class="status-banner s-{{ req.status|lower|replace(' ', '-') }}">
+  <div>
+    <div class="muted small">Request {{ request_number(req.id) }} · {{ req.category }}</div>
+    <div class="status-text">Current status: <b>{{ req.status }}</b>{% if req.confirmed_at %} · Confirmed by customer{% endif %}</div>
+    <div class="small">
+      {% if req.status == 'Submitted' %}Waiting for the administrator to assign a technician.
+      {% elif req.status == 'Assigned' %}Technician {{ req.technician_name }} will start the job soon.
+      {% elif req.status == 'In Progress' %}Technician {{ req.technician_name }} is working on it.
+      {% elif req.confirmed_at %}The customer confirmed the fix on {{ req.confirmed_at }}. The request is closed.
+      {% else %}The job is finished and waiting for the customer to confirm.{% endif %}
+    </div>
+  </div>
+  {% if late and user.role != 'customer' %}<span class="badge overdue-badge">⚠ Overdue · open {{ hours_open(req) }} h</span>{% endif %}
+</div>
+
+<div class="steps" aria-label="Status steps">
+  {% set idx = STATUSES.index(req.status) %}
+  {% for s in STATUSES %}
+    <div class="step {% if loop.index0 < idx %}done{% elif loop.index0 == idx %}current{% endif %}">{% if loop.index0 < idx %}✓ {% elif loop.index0 == idx %}● {% endif %}{{ s }}</div>
+  {% endfor %}
+</div>
+
+{# ---------- PB-08 / PB-11: technician actions ---------- #}
+{% if user.role == 'technician' and next_status %}
+<div class="card action">
+  <h2>Update job status</h2>
+  <form method="post" action="{{ url_for('update_status', req_id=req.id) }}" enctype="multipart/form-data">
+    <input type="hidden" name="status" value="{{ next_status }}">
+    <label>Note for the customer and administrator (optional)
+      <textarea name="note" rows="2" placeholder="{{ 'e.g. On my way, I will arrive at 4 pm' if next_status == 'In Progress' else 'e.g. Replaced the leaking pipe under the sink' }}"></textarea></label>
+    {% if next_status == 'Completed' %}
+    <label>After-service photo (optional)
+      <input type="file" name="after_photos" accept=".jpg,.jpeg,.png" multiple>
+      <span class="hint">A photo of the fixed problem. JPG or PNG, up to 5 MB.</span></label>
+    {% endif %}
+    <button class="btn" type="submit">Mark as {{ next_status }}</button>
+  </form>
+</div>
+{% endif %}
+
+{# ---------- PB-12: customer confirm / reopen ---------- #}
+{% if user.role == 'customer' and req.status == 'Completed' and not req.confirmed_at %}
+<div class="card action">
+  <h2>Was the problem fixed?</h2>
+  <p class="small">Please confirm the fix, or reopen the request if the problem is still there.</p>
+  <div class="decision">
+    <form method="post" action="{{ url_for('customer_decision', req_id=req.id) }}">
+      <input type="hidden" name="decision" value="confirm">
+      <button class="btn green" type="submit">Yes, confirm the fix</button>
+    </form>
+    <form method="post" action="{{ url_for('customer_decision', req_id=req.id) }}" class="reopen">
+      <input type="hidden" name="decision" value="reopen">
+      <label>No, reopen it. Reason <span class="req">*</span>
+        <input name="reason" required placeholder="e.g. The sink is still leaking"></label>
+      <button class="btn danger" type="submit">Reopen request</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<div class="grid2">
+  <div class="card">
+    <h2>Details</h2>
+    <dl>
+      <dt>Category</dt><dd>{{ req.category }}</dd>
+      <dt>Location</dt><dd>Building {{ req.building }}, Floor {{ req.floor }}, Unit {{ req.unit }}</dd>
+      <dt>Submitted</dt><dd>{{ req.created_at }}</dd>
+      {% if req.reopened_at %}<dt>Reopened</dt><dd>{{ req.reopened_at }}</dd>{% endif %}
+      {% if user.role != 'customer' %}<dt>Customer</dt><dd>{{ req.customer_name }} ({{ req.customer_phone or '-' }})</dd>{% endif %}
+      <dt>Technician</dt><dd>{{ req.technician_name ~ ' (' ~ req.technician_specialty ~ ')' if req.technician_name else 'Not assigned yet' }}</dd>
+      <dt>Description</dt><dd>{{ req.description }}</dd>
+    </dl>
+    <h3>Problem photos</h3>
+    {% if problem_photos %}
+      <div class="photos">
+        {% for p in problem_photos %}<a href="{{ url_for('uploaded_photo', filename=p.filename) }}" target="_blank"><img src="{{ url_for('uploaded_photo', filename=p.filename) }}" alt="Problem photo"></a>{% endfor %}
+      </div>
+    {% else %}<p class="muted small">No photos were attached.</p>{% endif %}
+
+    {% if after_photos or (user.role == 'technician' and req.status in ('In Progress', 'Completed')) %}
+    <h3>After-service photos</h3>
+    {% if after_photos %}
+      <div class="photos after">
+        {% for p in after_photos %}<figure><a href="{{ url_for('uploaded_photo', filename=p.filename) }}" target="_blank"><img src="{{ url_for('uploaded_photo', filename=p.filename) }}" alt="After-service photo"></a><figcaption>After · {{ p.uploaded_at }}</figcaption></figure>{% endfor %}
+      </div>
+    {% else %}<p class="muted small">No after-service photo yet.</p>{% endif %}
+    {% if user.role == 'technician' and req.status == 'Completed' and not req.confirmed_at %}
+      <form class="inline-upload" method="post" action="{{ url_for('add_after_photo', req_id=req.id) }}" enctype="multipart/form-data">
+        <input type="file" name="after_photos" accept=".jpg,.jpeg,.png" multiple required>
+        <button class="btn small" type="submit">Add after photo</button>
+      </form>
+    {% endif %}
+    {% endif %}
+
+    {% if reassign_options %}
+    <h3>Reassign technician</h3>
+    <form class="assign" method="post" action="{{ url_for('reassign_technician', req_id=req.id) }}">
+      <select name="technician_id" required>
+        <option value="">Choose...</option>
+        {% for t in reassign_options %}<option value="{{ t.id }}">{{ t.name }} ({{ t.specialty }})</option>{% endfor %}
+      </select>
+      <button class="btn small" type="submit">Reassign</button>
+    </form>
+    {% endif %}
+  </div>
+  <div class="card">
+    <h2>Status History</h2>
+    <ul class="timeline">
+      {% for h in history %}
+        <li><strong>{{ h.status }}</strong><span class="muted small">{{ h.changed_at }}{% if h.by_name %} &middot; {{ h.by_name }}{% endif %}</span>
+          {% if h.note %}<div class="small">{{ h.note }}</div>{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endblock %}

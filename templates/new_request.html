@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}New Request{% endblock %}
+{% block content %}
+<div class="card form-card">
+  <h1>New Maintenance Request</h1>
+  <p class="muted small">Fields marked <span class="req">*</span> are required.</p>
+  <form method="post" enctype="multipart/form-data">
+    <fieldset>
+      <legend>1. What is the problem?</legend>
+      <label>Category <span class="req">*</span>
+        <select name="category" required>
+          <option value="">-- choose a category --</option>
+          {% for c in categories %}<option {% if form.category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Description of the problem <span class="req">*</span>
+        <textarea name="description" rows="4" required placeholder="e.g. Water is leaking under the kitchen sink">{{ form.description }}</textarea>
+        <span class="hint">Describe what is wrong and where exactly it is, so the technician brings the right tools.</span>
+      </label>
+    </fieldset>
+    <fieldset>
+      <legend>2. Where is it?</legend>
+      <div class="row3">
+        <label>Building <span class="req">*</span><input name="building" value="{{ form.building }}" required></label>
+        <label>Floor <span class="req">*</span><input name="floor" value="{{ form.floor }}" required></label>
+        <label>Unit <span class="req">*</span><input name="unit" value="{{ form.unit }}" required></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>3. Photos (optional)</legend>
+      <label>Add photos of the problem
+        <input type="file" name="photos" accept=".jpg,.jpeg,.png" multiple>
+        <span class="hint">JPG or PNG only, up to 5 MB each. You can choose more than one photo.</span>
+      </label>
+    </fieldset>
+    <button class="btn" type="submit">Submit Request</button>
+    <a class="btn light" href="{{ url_for('customer_home') }}">Cancel</a>
+  </form>
+</div>
+{% endblock %}

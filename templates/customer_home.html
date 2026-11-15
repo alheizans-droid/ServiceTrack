@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}My Requests{% endblock %}
+{% block content %}
+<div class="head-row">
+  <h1>My Requests</h1>
+  <a class="btn" href="{{ url_for('new_request') }}">+ New Request</a>
+</div>
+{% if requests %}
+<table class="list">
+  <thead><tr><th>No.</th><th>Category</th><th>Location</th><th>Submitted</th><th>Technician</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for r in requests %}
+    <tr onclick="location.href='{{ url_for('request_detail', req_id=r.id) }}'">
+      <td><a href="{{ url_for('request_detail', req_id=r.id) }}">{{ request_number(r.id) }}</a></td>
+      <td>{{ r.category }}</td>
+      <td>Bldg {{ r.building }}, Floor {{ r.floor }}, Unit {{ r.unit }}</td>
+      <td>{{ r.created_at }}</td>
+      <td>{{ r.technician_name or '-' }}</td>
+      <td>{% with s=r.status %}{% include "_status.html" %}{% endwith %}
+        {% if r.status == 'Completed' and not r.confirmed_at %}<div class="small action-needed">Please confirm or reopen</div>{% endif %}
+        {% if r.confirmed_at %}<div class="small muted">Confirmed</div>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="card empty">You have not submitted any requests yet. <a href="{{ url_for('new_request') }}">Submit your first request</a>.</div>
+{% endif %}
+{% endblock %}

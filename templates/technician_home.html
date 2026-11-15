@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}My Jobs{% endblock %}
+{% block content %}
+<div class="head-row">
+  <h1>My Assigned Jobs</h1>
+  <div class="tabs">
+    <a class="{{ 'on' if show != 'all' else '' }}" href="{{ url_for('technician_home') }}">Open jobs</a>
+    <a class="{{ 'on' if show == 'all' else '' }}" href="{{ url_for('technician_home', show='all') }}">All jobs</a>
+  </div>
+</div>
+{% if requests %}
+<table class="list">
+  <thead><tr><th>No.</th><th>Photo</th><th>Problem</th><th>Location</th><th>Customer</th><th>Date</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for r in requests %}
+    <tr onclick="location.href='{{ url_for('request_detail', req_id=r.id) }}'">
+      <td><a href="{{ url_for('request_detail', req_id=r.id) }}">{{ request_number(r.id) }}</a></td>
+      <td>{% if r.first_photo %}<img class="thumb" src="{{ url_for('uploaded_photo', filename=r.first_photo) }}" alt="Problem photo">{% if r.photo_count > 1 %}<div class="small muted">+{{ r.photo_count - 1 }} more</div>{% endif %}{% else %}<span class="muted small">No photo</span>{% endif %}</td>
+      <td><b>{{ r.category }}</b><div class="small">{{ r.description|truncate(70) }}</div></td>
+      <td>Bldg {{ r.building }}, F{{ r.floor }}, Unit {{ r.unit }}</td>
+      <td>{{ r.customer_name }}</td>
+      <td>{{ r.created_at }}</td>
+      <td>{% with s=r.status %}{% include "_status.html" %}{% endwith %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="card empty">{% if show == 'all' %}No jobs have been assigned to you yet.{% else %}You have no open jobs right now.{% endif %}</div>
+{% endif %}
+{% endblock %}

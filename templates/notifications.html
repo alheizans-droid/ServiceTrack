@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+<div class="head-row">
+  <h1>Notifications</h1>
+  {% if unread_count %}
+  <form method="post" action="{{ url_for('read_all_notifications') }}"><button class="btn light" type="submit">Mark all as read</button></form>
+  {% endif %}
+</div>
+{% if notifications %}
+<ul class="notes">
+  {% for n in notifications %}
+  <li class="{{ 'unread' if not n.is_read else '' }}">
+    <a href="{{ url_for('open_notification', note_id=n.id) }}">
+      <span class="tag">{{ 'New' if not n.is_read else 'Read' }}</span>
+      <span class="msg">{{ n.message }}</span>
+      <span class="muted small">{{ n.created_at }}</span>
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="card empty">You have no notifications yet. You will be notified here whenever the status of one of your requests changes.</div>
+{% endif %}
+{% endblock %}

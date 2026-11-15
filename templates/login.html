@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<div class="card narrow">
+  <h1>Log in</h1>
+  <p class="muted">Report maintenance problems and follow them until they are fixed.</p>
+  <form method="post">
+    <label>Email <input type="email" name="email" value="{{ email }}" required autofocus></label>
+    <label>Password <input type="password" name="password" required></label>
+    <button class="btn" type="submit">Log in</button>
+  </form>
+  <p class="muted small">New resident? <a href="{{ url_for('register') }}">Create an account</a></p>
+</div>
+{% endblock %}
