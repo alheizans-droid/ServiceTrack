@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+env/
+
+# Runtime data (created when the app runs)
+servicetrack.db
+uploads/*
+!uploads/.keep
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
