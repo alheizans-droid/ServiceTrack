@@ -14,7 +14,8 @@ from datetime import datetime, timedelta
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 200
+with open(os.path.join(ROOT, "demo_photos", "sink_leak.png"), "rb") as photo:
+    PNG = photo.read()
 
 
 @pytest.fixture()
@@ -26,7 +27,7 @@ def app_module(tmp_path, monkeypatch):
         mod = importlib.reload(sys.modules["app"])
     else:
         mod = importlib.import_module("app")
-    mod.app.config["TESTING"] = True
+    mod.app.config.update(TESTING=True, CSRF_ENABLED=False)
     yield mod
     sys.path.remove(ROOT)
 
@@ -327,7 +328,9 @@ def test_pb13_ac2_deactivated_cannot_login_or_be_assigned(client, app_module):
     login(client, "admin@servicetrack.com", "admin123")
     r = client.post(f"/admin/technicians/{khalid}/active", data={"active": "0"}, follow_redirects=True)
     assert b"reassign the open job" in r.data                      # open job blocks deactivation
-    omar = tech_id(app_module, "omar@servicetrack.com")
+    client.post("/admin/technicians/new", data={"name": "Backup Plumber", "email": "backup@test.com",
+                 "phone": "0555", "specialty": "Plumbing", "password": "tech123"})
+    omar = tech_id(app_module, "backup@test.com")
     client.post(f"/admin/reassign/{rid}", data={"technician_id": omar})
     client.post(f"/admin/technicians/{khalid}/active", data={"active": "0"})
     assert db(app_module).execute("SELECT active FROM users WHERE id=?", (khalid,)).fetchone()[0] == 0
@@ -394,3 +397,149 @@ def test_sprint1_database_is_upgraded(tmp_path, monkeypatch):
     sys.path.remove(ROOT)
     cols = {r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(requests)")}
     assert {"confirmed_at", "reopened_at"} <= cols
+
+
+# ---------------------------------------------------------------- Security and validation regressions from archive review
+def test_pb06_rejects_wrong_specialty_assignment_and_reassignment(client, app_module):
+    register_customer(client)
+    login(client, "sara@test.com", "secret1")
+    rid = submit_request(client)
+    login(client, "admin@servicetrack.com", "admin123")
+    wrong = tech_id(app_module, "fahad@servicetrack.com")
+    correct = tech_id(app_module, "khalid@servicetrack.com")
+    client.post(f"/admin/assign/{rid}", data={"technician_id": wrong})
+    assert status_of(app_module, rid) == "Submitted"
+    client.post(f"/admin/assign/{rid}", data={"technician_id": correct})
+    client.post(f"/admin/reassign/{rid}", data={"technician_id": wrong})
+    row = db(app_module).execute("SELECT * FROM requests WHERE id=?", (rid,)).fetchone()
+    assert row["technician_id"] == correct and row["status"] == "Assigned"
+
+
+def test_photo_urls_restricted_to_owner_admin_and_assigned_technician(client, app_module):
+    rid = assigned_request(client, app_module)
+    filename = db(app_module).execute("SELECT filename FROM photos WHERE request_id=?", (rid,)).fetchone()[0]
+    path = "/uploads/" + filename
+    assert client.get(path).status_code == 200  # administrator
+    login(client, "sara@test.com", "secret1")
+    assert client.get(path).status_code == 200
+    login(client, "khalid@servicetrack.com", "tech123")
+    assert client.get(path).status_code == 200
+    login(client, "fahad@servicetrack.com", "tech123")
+    assert client.get(path).status_code in (403, 404)
+    register_customer(client, "other@test.com")
+    login(client, "other@test.com", "secret1")
+    assert client.get(path).status_code in (403, 404)
+    assert client.get("/uploads/does-not-exist.png").status_code == 404
+
+
+def test_fake_image_content_rejected_without_partial_mutations(client, app_module):
+    register_customer(client)
+    login(client, "sara@test.com", "secret1")
+    data = {"category": "Plumbing", "description": "Leak", "building": "A", "floor": "3",
+            "unit": "12", "photos": (io.BytesIO(b"not an image"), "spoof.png")}
+    client.post("/customer/new", data=data, content_type="multipart/form-data")
+    assert db(app_module).execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 0
+    assert db(app_module).execute("SELECT COUNT(*) FROM photos").fetchone()[0] == 0
+    rid = submit_request(client)
+    login(client, "admin@servicetrack.com", "admin123")
+    client.post(f"/admin/assign/{rid}", data={"technician_id": tech_id(app_module, "khalid@servicetrack.com")})
+    login(client, "khalid@servicetrack.com", "tech123")
+    client.post(f"/technician/update/{rid}", data={"status": "In Progress"})
+    history_before = db(app_module).execute("SELECT COUNT(*) FROM status_history").fetchone()[0]
+    notifications_before = db(app_module).execute("SELECT COUNT(*) FROM notifications").fetchone()[0]
+    for path in (f"/technician/after-photo/{rid}", f"/technician/update/{rid}"):
+        client.post(path, data={"status": "Completed", "note": "Must not persist",
+                               "after_photos": (io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"x" * 80), "spoof.png")},
+                    content_type="multipart/form-data")
+    assert status_of(app_module, rid) == "In Progress"
+    assert db(app_module).execute("SELECT COUNT(*) FROM photos WHERE kind='after'").fetchone()[0] == 0
+    assert db(app_module).execute("SELECT COUNT(*) FROM status_history").fetchone()[0] == history_before
+    assert db(app_module).execute("SELECT COUNT(*) FROM notifications").fetchone()[0] == notifications_before
+
+
+def test_open_job_blocks_technician_specialty_change(client, app_module):
+    rid = assigned_request(client, app_module)
+    tid = tech_id(app_module, "khalid@servicetrack.com")
+    login(client, "admin@servicetrack.com", "admin123")
+    client.post(f"/admin/technicians/{tid}/edit", data={"name": "Khalid Alomari",
+                "email": "khalid@servicetrack.com", "phone": "0500000000",
+                "specialty": "Electrical", "password": ""})
+    assert db(app_module).execute("SELECT specialty FROM users WHERE id=?", (tid,)).fetchone()[0] == "Plumbing"
+    assert db(app_module).execute("SELECT technician_id FROM requests WHERE id=?", (rid,)).fetchone()[0] == tid
+
+
+def csrf_post(client, path, data=None):
+    html = client.get("/login").get_data(as_text=True)
+    import re
+    token = re.search(r'name=["\']csrf_token["\'][^>]*value=["\']([^"\']+)', html)
+    assert token, "CSRF token must be present in the login form"
+    return client.post(path, data=dict(data or {}, csrf_token=token.group(1)))
+
+
+def test_csrf_rejects_missing_invalid_and_unicode_tokens(client, app_module):
+    app_module.app.config["CSRF_ENABLED"] = True
+    before = db(app_module).execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    for data in ({}, {"csrf_token": "invalid"}, {"csrf_token": "é"}):
+        r = client.post("/register", data=dict(name="No Token", email="no@test.com", phone="05",
+                        building="A", unit="1", password="secret1", **data))
+        assert r.status_code == 400
+    assert db(app_module).execute("SELECT COUNT(*) FROM users").fetchone()[0] == before
+    r = csrf_post(client, "/login", {"email": "admin@servicetrack.com", "password": "admin123"})
+    assert r.status_code == 302 and r.headers["Location"].endswith("/admin")
+    data = dict(name="CSRF Valid", email="csrf.valid@test.com", specialty="Plumbing", password="secret1")
+    assert client.post("/admin/technicians/new", data=data).status_code == 400
+    assert db(app_module).execute("SELECT COUNT(*) FROM users WHERE email=?", (data["email"],)).fetchone()[0] == 0
+    assert csrf_post(client, "/admin/technicians/new", data).status_code == 302
+    assert db(app_module).execute("SELECT COUNT(*) FROM users WHERE email=?", (data["email"],)).fetchone()[0] == 1
+
+
+def test_all_role_post_forms_include_csrf_token(client, app_module):
+    rid = assigned_request(client, app_module)
+    completed_rid = completed_request(client, app_module)
+    app_module.app.config["CSRF_ENABLED"] = True
+    from html.parser import HTMLParser
+    class Forms(HTMLParser):
+        def __init__(self):
+            super().__init__(); self.forms = []; self.current = None
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == "form":
+                self.current = {"post": attrs.get("method", "get").lower() == "post", "token": False}
+            if tag == "input" and self.current is not None and attrs.get("name") == "csrf_token":
+                self.current["token"] = bool(attrs.get("value"))
+        def handle_endtag(self, tag):
+            if tag == "form" and self.current is not None:
+                self.forms.append(self.current); self.current = None
+    def check(path):
+        r = client.get(path); assert r.status_code == 200, path
+        parser = Forms(); parser.feed(r.get_data(as_text=True))
+        assert all(f["token"] for f in parser.forms if f["post"]), path
+    for email, password, paths in [
+        ("admin@servicetrack.com", "admin123", ["/admin", "/admin/technicians", "/admin/technicians/new",
+                                             f"/admin/technicians/{tech_id(app_module, 'khalid@servicetrack.com')}/edit",
+                                             f"/request/{rid}"]),
+        ("khalid@servicetrack.com", "tech123", ["/technician", f"/request/{rid}", f"/request/{completed_rid}"]),
+        ("sara@test.com", "secret1", ["/customer", "/customer/new", "/notifications", f"/request/{rid}", f"/request/{completed_rid}"])]:
+        client.get("/logout"); csrf_post(client, "/login", {"email": email, "password": password})
+        for path in paths: check(path)
+    client.get("/logout"); check("/login"); check("/register")
+
+
+# A real 16x12 JPEG photo (generated once with Pillow) used to test JPEG uploads.
+REAL_JPEG = __import__("base64").b64decode("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAMABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDoaKKK988U/9k=")
+
+
+def test_jpeg_with_extra_data_after_image_is_accepted(client, app_module):
+    """Photos from some phones (e.g. motion photos) have extra bytes after the image end marker."""
+    register_customer(client)
+    login(client, "sara@test.com", "secret1")
+    for name, payload in (("normal.jpg", REAL_JPEG), ("phone.jpg", REAL_JPEG + b"MotionPhoto_Data" + b"x" * 64)):
+        data = {"category": "Plumbing", "description": "Leak", "building": "A", "floor": "3",
+                "unit": "12", "photos": (io.BytesIO(payload), name)}
+        client.post("/customer/new", data=data, content_type="multipart/form-data")
+    assert db(app_module).execute("SELECT COUNT(*) FROM photos").fetchone()[0] == 2
+    # a file that only starts like a JPEG is still rejected
+    data = {"category": "Plumbing", "description": "Leak", "building": "A", "floor": "3",
+            "unit": "12", "photos": (io.BytesIO(b"\xff\xd8\xff\xe0" + b"x" * 80 + b"\xff\xd9"), "fake.jpg")}
+    client.post("/customer/new", data=data, content_type="multipart/form-data")
+    assert db(app_module).execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 2

@@ -48,14 +48,16 @@
       <td>
         {% if r.status == 'Submitted' %}
           {% set matching = technicians|selectattr('specialty', 'equalto', r.category)|list %}
-          {% set options = matching if matching else technicians|selectattr('specialty', 'equalto', 'General')|list %}
+          {% set options = matching %}
           <form class="assign" method="post" action="{{ url_for('assign_technician', req_id=r.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <select name="technician_id" required aria-label="Technician for {{ request_number(r.id) }}">
-              <option value="">Choose...</option>
+              <option value="">Choose matching specialty...</option>
               {% for t in options %}<option value="{{ t.id }}">{{ t.name }} ({{ t.specialty }})</option>{% endfor %}
             </select>
             <button class="btn small" type="submit">Assign</button>
           </form>
+          {% if not options %}<span class="muted small">No active technician matches this request category.</span>{% endif %}
         {% else %}
           {{ r.technician_name or '-' }}
         {% endif %}

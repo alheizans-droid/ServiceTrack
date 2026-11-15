@@ -4,7 +4,8 @@
 <div class="head-row">
   <h1>Notifications</h1>
   {% if unread_count %}
-  <form method="post" action="{{ url_for('read_all_notifications') }}"><button class="btn light" type="submit">Mark all as read</button></form>
+  <form method="post" action="{{ url_for('read_all_notifications') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn light" type="submit">Mark all as read</button></form>
   {% endif %}
 </div>
 {% if notifications %}

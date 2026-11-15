@@ -31,6 +31,8 @@ if "--reset" in sys.argv:
 
 import app as st  # noqa: E402  (import after the optional reset)
 
+# Only this local seed process bypasses CSRF; the running website keeps it enabled.
+st.app.config["CSRF_ENABLED"] = False
 client = st.app.test_client()
 con = sqlite3.connect(st.DB_PATH)
 if con.execute("SELECT COUNT(*) FROM requests").fetchone()[0]:

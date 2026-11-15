@@ -29,6 +29,7 @@
 <div class="card action">
   <h2>Update job status</h2>
   <form method="post" action="{{ url_for('update_status', req_id=req.id) }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="status" value="{{ next_status }}">
     <label>Note for the customer and administrator (optional)
       <textarea name="note" rows="2" placeholder="{{ 'e.g. On my way, I will arrive at 4 pm' if next_status == 'In Progress' else 'e.g. Replaced the leaking pipe under the sink' }}"></textarea></label>
@@ -49,10 +50,12 @@
   <p class="small">Please confirm the fix, or reopen the request if the problem is still there.</p>
   <div class="decision">
     <form method="post" action="{{ url_for('customer_decision', req_id=req.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="decision" value="confirm">
       <button class="btn green" type="submit">Yes, confirm the fix</button>
     </form>
     <form method="post" action="{{ url_for('customer_decision', req_id=req.id) }}" class="reopen">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="decision" value="reopen">
       <label>No, reopen it. Reason <span class="req">*</span>
         <input name="reason" required placeholder="e.g. The sink is still leaking"></label>
@@ -90,6 +93,7 @@
     {% else %}<p class="muted small">No after-service photo yet.</p>{% endif %}
     {% if user.role == 'technician' and req.status == 'Completed' and not req.confirmed_at %}
       <form class="inline-upload" method="post" action="{{ url_for('add_after_photo', req_id=req.id) }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="file" name="after_photos" accept=".jpg,.jpeg,.png" multiple required>
         <button class="btn small" type="submit">Add after photo</button>
       </form>
@@ -98,10 +102,12 @@
 
     {% if reassign_options %}
     <h3>Reassign technician</h3>
+    <p class="muted small">Only active technicians with the same specialty as this request are listed.</p>
     <form class="assign" method="post" action="{{ url_for('reassign_technician', req_id=req.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <select name="technician_id" required>
         <option value="">Choose...</option>
-        {% for t in reassign_options %}<option value="{{ t.id }}">{{ t.name }} ({{ t.specialty }})</option>{% endfor %}
+        {% for t in reassign_options if t.specialty == req.category %}<option value="{{ t.id }}">{{ t.name }} ({{ t.specialty }})</option>{% endfor %}
       </select>
       <button class="btn small" type="submit">Reassign</button>
     </form>

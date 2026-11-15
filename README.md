@@ -12,33 +12,56 @@ Yara Alharbi (Developer) · Raghad Abdullah Alotaibi (Developer / QA)
 
 Built with Python (Flask) and SQLite.
 
-## How to run
+## How to run on macOS using PyCharm
 
-1. Install Python 3.10 or newer (https://www.python.org/downloads/).
-   On Windows, tick "Add Python to PATH" during installation.
-2. Download the project:
+Use Python 3.10 or newer. Extract the ZIP, then use **File > Open** in PyCharm
+and open the `servicetrack` folder containing `app.py`, `requirements.txt`,
+`templates` and `static`.
 
-       git clone <repository-url>
-       cd servicetrack
+Open PyCharm's **Terminal** in that folder and run these commands one at a time:
 
-3. Install the requirements (one time only):
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m flask --app app run --port 5001
+```
 
-       pip install -r requirements.txt
+Open **http://127.0.0.1:5001** in Safari or Chrome. Keep the terminal running;
+press **Control+C** to stop the server. Port 5001 avoids the macOS AirPlay
+Receiver service that can occupy port 5000.
 
-4. (Optional) Load demo data for a presentation:
+For the PyCharm Run button, select the project's `.venv/bin/python` as its
+Python Interpreter, then right-click `app.py` and choose **Run**. This direct
+startup uses **http://127.0.0.1:5000**. If 5000 is busy, use the Terminal command
+above with port 5001.
 
-       python seed_demo.py --reset
+The app uses **Python, Flask and SQLite**. The SQLite database file
+`servicetrack.db` and the uploads directory are created automatically.
+MySQL, PHP and XAMPP are not required to run this project.
 
-5. Start the app:
+An original Sprint 1 database is upgraded while preserving its records.
+Stop the app and back up any existing database and uploaded photos before
+replacing source files; keep that data when upgrading.
 
-       python app.py
+On Windows, create a virtual environment with `python -m venv .venv`, then use
+`.venv\Scripts\python.exe -m pip install -r requirements.txt` and
+`.venv\Scripts\python.exe app.py`.
 
-6. Open http://127.0.0.1:5000 in your browser.
+### Optional presentation data
 
-The database file `servicetrack.db` is created automatically the first time.
-A database created by the Sprint 1 version is upgraded automatically.
-To start again with an empty system, run `python seed_demo.py --reset`, or stop the
-app and delete `servicetrack.db` and the photos inside `uploads/`.
+For a fresh project with no requests, stop the server and run:
+
+```bash
+.venv/bin/python seed_demo.py
+```
+
+Then start the server again. The script adds six demonstration requests,
+photos and two demo customers; it dates two demonstration records earlier
+so that the overdue filter can be shown.
+
+`seed_demo.py --reset` deletes the selected database and uploaded photos.
+Use it only when you intentionally want to discard existing demonstration
+data. Normal startup does not need this command.
 
 ## Ready accounts
 
@@ -85,17 +108,27 @@ The two demo customers exist only after running `seed_demo.py`.
 The overdue threshold can be changed with the environment variable
 `SERVICETRACK_OVERDUE_HOURS` (default 48).
 
+## Validation and permissions
+
+Uploaded files must contain a valid, nonempty JPG/JPEG or PNG image and be at most
+5 MB each. Photo access follows the same request-owner and assigned-technician
+permissions as the request details. Assignments and reassignments use active
+technicians with the matching specialty; a technician with open jobs cannot be
+deactivated or moved to a different specialty until those jobs are reassigned.
+POST forms include CSRF protection. Local startup uses a generated session secret
+unless SECRET_KEY or SERVICETRACK_SECRET_KEY is set in the environment.
+
 ## Automated tests
 
-    pip install -r requirements-dev.txt
-    python -m pytest -v
+    .venv/bin/python -m pip install -r requirements-dev.txt
+    .venv/bin/python -m pytest -v
 
-26 tests cover every Sprint 2 acceptance criterion and a regression of the Sprint 1 flow.
+33 automated tests cover the Sprint 2 features, important rejected actions and a regression of the Sprint 1 flow.
 The tests use a temporary database and do not touch `servicetrack.db`.
 
 ## Demo scenario (for the Sprint Review)
 
-After `python seed_demo.py --reset`:
+After loading demo data into a fresh project with `seed_demo.py`:
 
 1. **Technician** (fahad@servicetrack.com): My Jobs shows SR-0002 with its photo. Open it,
    add a note and mark it In Progress.
@@ -103,8 +136,7 @@ After `python seed_demo.py --reset`:
    (Completed, with an after-service photo) and confirm it, or reopen it with a reason.
 3. **Admin** (admin@servicetrack.com): the dashboard shows 2 overdue requests
    (SR-0004 and SR-0005). Use "Overdue only", assign SR-0005, then go to Technicians.
-4. **Admin**: try to deactivate Saad (blocked: SR-0004 is still open), reassign SR-0004
-   from its details page, then deactivate Saad. Saad can no longer log in.
+4. **Admin**: try to deactivate Saad (blocked: SR-0004 is still open). Create another active A/C technician, reassign SR-0004 to that technician from its details page, then deactivate Saad. Saad can no longer log in.
 
 ## Project structure
 

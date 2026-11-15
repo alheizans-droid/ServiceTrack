@@ -5,6 +5,7 @@
   <h1>Create an account</h1>
   <p class="muted small">All fields are required.</p>
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Full name <input name="name" value="{{ form.name }}" required></label>
     <label>Email <input type="email" name="email" value="{{ form.email }}" required></label>
     <label>Phone <input name="phone" value="{{ form.phone }}" required placeholder="05xxxxxxxx"></label>

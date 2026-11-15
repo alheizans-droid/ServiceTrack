@@ -5,6 +5,7 @@
   <h1>Log in</h1>
   <p class="muted">Report maintenance problems and follow them until they are fixed.</p>
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Email <input type="email" name="email" value="{{ email }}" required autofocus></label>
     <label>Password <input type="password" name="password" required></label>
     <button class="btn" type="submit">Log in</button>

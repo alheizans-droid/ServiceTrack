@@ -13,9 +13,13 @@ Run:
     python app.py
 Then open http://127.0.0.1:5000
 """
+import hmac
 import os
+import secrets
 import sqlite3
+import struct
 import uuid
+import zlib
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -39,8 +43,29 @@ OVERDUE_HOURS = int(os.environ.get("SERVICETRACK_OVERDUE_HOURS", "48"))
 TIME_FMT = "%Y-%m-%d %H:%M"
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "servicetrack-dev-key-change-me")
+app.config["SECRET_KEY"] = (os.environ.get("SERVICETRACK_SECRET_KEY")
+                            or os.environ.get("SECRET_KEY") or secrets.token_hex(32))
 app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024  # whole form
+app.config["CSRF_ENABLED"] = True
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+
+def csrf_token():
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_urlsafe(32)
+    return session["csrf_token"]
+
+
+@app.before_request
+def check_csrf():
+    if request.method == "POST" and app.config.get("CSRF_ENABLED", True):
+        sent = request.form.get("csrf_token", "")
+        expected = session.get("csrf_token", "")
+        if (not isinstance(sent, str) or not isinstance(expected, str)
+                or not sent or not expected
+                or not hmac.compare_digest(sent.encode("utf-8"), expected.encode("utf-8"))):
+            abort(400, description="The form has expired. Refresh the page and try again.")
 
 
 # ---------------------------------------------------------------- database
@@ -129,6 +154,11 @@ def now():
     return datetime.now().strftime(TIME_FMT)
 
 
+def parse_time(value):
+    """Read both the original minute timestamps and second-resolution timestamps."""
+    return datetime.fromisoformat(value)
+
+
 def init_db():
     """Create/upgrade tables and add the starting admin and technician accounts."""
     os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -170,12 +200,12 @@ def is_overdue(req, at=None):
     it was created (or last reopened). Completed requests are never overdue."""
     if req["status"] not in OPEN_STATUSES:
         return False
-    start = datetime.strptime(overdue_since(req), TIME_FMT)
+    start = parse_time(overdue_since(req))
     return (at or datetime.now()) - start > timedelta(hours=OVERDUE_HOURS)
 
 
 def hours_open(req):
-    start = datetime.strptime(overdue_since(req), TIME_FMT)
+    start = parse_time(overdue_since(req))
     return int((datetime.now() - start).total_seconds() // 3600)
 
 
@@ -201,7 +231,7 @@ def inject_user():
     if user is not None and user["role"] == "customer":
         unread = get_db().execute(
             "SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0", (user["id"],)).fetchone()[0]
-    return {"user": user, "unread_count": unread}
+    return {"user": user, "unread_count": unread, "csrf_token": csrf_token}
 
 
 def login_required(*roles):
@@ -242,21 +272,86 @@ def notify_customer(db, req, message):
         (req["customer_id"], req["id"], message, now()))
 
 
+def valid_png(data):
+    if not data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return False
+    pos, header, image_data = 8, False, False
+    while pos + 12 <= len(data):
+        length = struct.unpack('>I',data[pos:pos+4])[0]
+        if pos + 12 + length > len(data):
+            return False
+        kind, payload = data[pos+4:pos+8], data[pos+8:pos+8+length]
+        crc = struct.unpack('>I',data[pos+8+length:pos+12+length])[0]
+        if (zlib.crc32(kind+payload) & 0xffffffff) != crc:
+            return False
+        if not header:
+            if kind != b'IHDR' or length != 13:
+                return False
+            width,height = struct.unpack('>II',payload[:8])
+            if width < 1 or height < 1:
+                return False
+            header = True
+        if kind == b'IDAT':
+            image_data = True
+        pos += length + 12
+        if kind == b'IEND':
+            return length == 0 and header and image_data and pos == len(data)
+    return False
+
+def valid_jpeg(data):
+    # Some phones and photo editors add extra data after the end-of-image marker
+    # (for example Samsung motion photos), so the marker must exist but may not be last.
+    if len(data) < 12 or not data.startswith(b'\xff\xd8') or b'\xff\xd9' not in data[2:]:
+        return False
+    pos, frame = 2, False
+    frames = {0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf}
+    while pos + 3 < len(data):
+        if data[pos] != 0xff:
+            return False
+        while pos < len(data) and data[pos] == 0xff:
+            pos += 1
+        if pos >= len(data):
+            return False
+        marker = data[pos]
+        pos += 1
+        if marker in {0xd8,0xd9} or 0xd0 <= marker <= 0xd7:
+            continue
+        if pos + 2 > len(data):
+            return False
+        length = int.from_bytes(data[pos:pos+2],'big')
+        if length < 2 or pos + length > len(data):
+            return False
+        if marker in frames:
+            if length < 8 or int.from_bytes(data[pos+3:pos+5],'big') < 1 or int.from_bytes(data[pos+5:pos+7],'big') < 1:
+                return False
+            frame = True
+        if marker == 0xda:
+            return frame and length >= 6
+        pos += length
+    return False
+
 def read_photo_uploads(field):
-    """Validate uploaded photos (JPG/PNG, max 5 MB each). Returns (photos, errors)."""
+    """Validate a nonempty JPG/PNG image, reading at most 5 MB plus one byte."""
     photos, errors = [], []
     for f in request.files.getlist(field):
         if not f or not f.filename:
             continue
-        data = f.read()
+        data = f.stream.read(MAX_PHOTO_SIZE + 1)
         if not allowed_photo(f.filename):
             errors.append(f'"{f.filename}" was not uploaded: only JPG and PNG photos are accepted. '
                           'Please choose a .jpg or .png file.')
         elif len(data) > MAX_PHOTO_SIZE:
             errors.append(f'"{f.filename}" was not uploaded: it is larger than 5 MB. '
                           'Please choose a smaller photo.')
+        elif not data:
+            errors.append(f'"{f.filename}" was not uploaded: the file is empty. Please choose the original photo.')
         else:
-            photos.append((f.filename.rsplit(".", 1)[1].lower(), data))
+            ext = f.filename.rsplit(".", 1)[1].lower()
+            if not (valid_png(data) if ext == "png" else valid_jpeg(data)):
+                errors.append(f'"{f.filename}" was not uploaded: it is not a valid image. '
+                              'Please choose the original JPG or PNG photo file.')
+            else:
+                photos.append((ext, data))
     return photos, errors
 
 
@@ -396,6 +491,16 @@ def new_request():
 @app.route("/uploads/<path:filename>")
 @login_required()
 def uploaded_photo(filename):
+    req = get_db().execute(
+        "SELECT r.* FROM photos p JOIN requests r ON r.id=p.request_id WHERE p.filename=?",
+        (filename,)).fetchone()
+    if req is None:
+        abort(404)
+    user = current_user()
+    if user["role"] == "customer" and req["customer_id"] != user["id"]:
+        abort(403)
+    if user["role"] == "technician" and req["technician_id"] != user["id"]:
+        abort(403)
     return send_from_directory(UPLOAD_DIR, filename)
 
 
@@ -426,7 +531,7 @@ def request_detail(req_id):
     if user["role"] == "admin" and req["status"] in ("Assigned", "In Progress"):
         reassign_options = db.execute(
             "SELECT id, name, specialty FROM users WHERE role='technician' AND active=1 AND id != ? "
-            "ORDER BY (specialty = ?) DESC, name", (req["technician_id"] or 0, req["category"])).fetchall()
+            "AND specialty=? ORDER BY name", (req["technician_id"] or 0, req["category"])).fetchall()
     return render_template(
         "request_detail.html", req=req, history=history,
         problem_photos=[p for p in photos if p["kind"] == "problem"],
@@ -484,6 +589,8 @@ def assign_technician(req_id):
     if tech is None:
         flash(f"{request_number(req_id)} was not assigned: please choose an active technician from the list.",
               "error")
+    elif tech["specialty"] != req["category"]:
+        flash("Please choose an active technician whose specialty matches the request category.", "error")
     elif req["status"] != "Submitted":
         flash(f"{request_number(req_id)} is already {req['status']}; it cannot be assigned again.", "error")
     else:
@@ -509,6 +616,8 @@ def reassign_technician(req_id):
         flash("Only Assigned or In Progress requests can be reassigned.", "error")
     elif tech is None or tech_id == req["technician_id"]:
         flash("Please choose a different, active technician.", "error")
+    elif tech["specialty"] != req["category"]:
+        flash("Please choose an active technician whose specialty matches the request category.", "error")
     else:
         db.execute("UPDATE requests SET technician_id=? WHERE id=?", (tech_id, req_id))
         add_history(db, req_id, req["status"], f"Reassigned to {tech['name']} ({tech['specialty']})")
@@ -721,6 +830,10 @@ def edit_technician(tech_id):
         form = technician_form()
         form["email"] = form["email"].lower()
         error = validate_technician(form, db, require_password=False, editing_id=tech_id)
+        if (not error and form["specialty"] != tech["specialty"]
+                and db.execute("SELECT 1 FROM requests WHERE technician_id=? "
+                               "AND status IN ('Assigned','In Progress') LIMIT 1", (tech_id,)).fetchone()):
+            error = "Please reassign this technician's open jobs before changing the specialty."
         if error:
             flash(error, "error")
         else:
@@ -759,6 +872,11 @@ def set_technician_active(tech_id):
 
 
 # ---------------------------------------------------------------- errors
+@app.errorhandler(400)
+def bad_request(error):
+    return render_template("message.html", title="Please try again", text=error.description), 400
+
+
 @app.errorhandler(403)
 def forbidden(_e):
     return render_template("message.html", title="Access denied",
@@ -780,4 +898,4 @@ def too_large(_e):
 init_db()
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=False)
